@@ -26,15 +26,13 @@ jobs:
             lib32ncurses5-dev lib32readline-dev libssl-dev \
             libxml2 libxslt1-dev lz4 zip zlib1g-dev \
             python3 python3-pip python3-venv \
-            libncurses-dev
+            libncurses-dev \
+            clang lld llvm
 
-      - name: Setup ZyCromerZ Clang Toolchain
+      - name: Verify clang
         run: |
-          wget -q "https://github.com/ZyCromerZ/Clang/releases/download/16.0.6-20260807-release/Clang-16.0.6-20260807.tar.gz" -O /tmp/clang.tar.gz
-          mkdir -p toolchain
-          tar xf /tmp/clang.tar.gz -C toolchain --strip-components=1
-          rm /tmp/clang.tar.gz
-          toolchain/bin/clang --version
+          clang --version
+          lld --version
 
       - name: Apply USB Serial + NRF52 BLE config
         run: |
@@ -70,7 +68,6 @@ jobs:
 
       - name: Build kernel
         run: |
-          export PATH=$PWD/toolchain/bin:$PATH
           export KBUILD_BUILD_USER=nh-builder
           export KBUILD_BUILD_HOST=github
           make O=out CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 ARCH=arm64 vendor/nh_defconfig
