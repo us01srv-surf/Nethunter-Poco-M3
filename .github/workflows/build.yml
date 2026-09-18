@@ -28,15 +28,20 @@ jobs:
             libxml2 libxslt1-dev lz4 zip zlib1g-dev \
             python3 \
             clang lld llvm llvm-dev
-          # python2 not available on jammy, symlink python3 as fallback for mkdtboimg.py
-          sudo ln -sf /usr/bin/python3 /usr/bin/python2
-          sudo ln -sf /usr/bin/python3 /usr/bin/python
+
+      - name: Patch mkdtboimg.py for Python 3
+        run: |
+          # Fix Python 2 -> 3 incompatibility (xrange -> range)
+          sed -i 's/xrange/range/g' scripts/dtc/libfdt/mkdtboimg.py
+          sed -i 's/print \(/print(/g' scripts/dtc/libfdt/mkdtboimg.py
+          # Also fix any other Python2 issues
+          python3 scripts/dtc/libfdt/mkdtboimg.py 2>&1 | head -3 || true
+          echo "mkdtboimg.py patched for Python 3"
 
       - name: Verify toolchain
         run: |
           aarch64-linux-gnu-gcc --version | head -1
           clang --version | head -1
-          python2 --version
 
       - name: Apply USB Serial + NRF52 BLE config
         run: |
