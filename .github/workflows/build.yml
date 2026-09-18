@@ -32,7 +32,7 @@ jobs:
       - name: Verify clang
         run: |
           clang --version
-          lld --version
+          ld.lld --version
 
       - name: Apply USB Serial + NRF52 BLE config
         run: |
