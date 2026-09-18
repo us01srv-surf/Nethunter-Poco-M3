@@ -28,20 +28,22 @@ jobs:
             libxml2 libxslt1-dev lz4 zip zlib1g-dev \
             python3 \
             clang lld llvm llvm-dev
+          # kernel Makefile calls 'python2' — symlink to python3
+          sudo ln -sf /usr/bin/python3 /usr/bin/python2
 
       - name: Patch mkdtboimg.py for Python 3
         run: |
           python3 -c "
-          import re
           with open('scripts/dtc/libfdt/mkdtboimg.py', 'r') as f:
               content = f.read()
           content = content.replace('xrange', 'range')
-          content = re.sub(r'print ([^(])', r'print(\1', content)
-          content = re.sub(r'print \(', r'print(', content)
+          content = content.replace('print ', 'print(')
+          content = content.replace('print(print(', 'print(')
           with open('scripts/dtc/libfdt/mkdtboimg.py', 'w') as f:
               f.write(content)
           print('Patched mkdtboimg.py for Python 3')
           "
+          # Verify it runs
           python3 scripts/dtc/libfdt/mkdtboimg.py 2>&1 | head -3 || true
 
       - name: Apply USB Serial + NRF52 BLE config
