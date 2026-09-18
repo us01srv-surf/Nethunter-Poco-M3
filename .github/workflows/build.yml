@@ -22,25 +22,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             bc bison build-essential ccache curl flex \
-            g++-multilib gcc-multilib git gnupg \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+            git gnupg \
             lib32ncurses5-dev lib32readline-dev libssl-dev \
             libxml2 libxslt1-dev lz4 zip zlib1g-dev \
             python3 python3-pip python3-venv \
-            libncurses-dev
+            libncurses-dev \
+            clang lld llvm
 
-      - name: Install Clang 18 from LLVM apt repo
+      - name: Verify toolchain
         run: |
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
-          echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-18 main" | sudo tee /etc/apt/sources.list.d/llvm-18.list
-          sudo apt-get update
-          sudo apt-get install -y clang-18 lld-18 llvm-18
-          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
-          sudo update-alternatives --install /usr/bin/lld lld /usr/bin/lld-18 100
-          sudo update-alternatives --install /usr/bin/ld.lld ld.lld /usr/bin/ld.lld-18 100
-          sudo update-alternatives --install /usr/bin/llvm-ar llvm-ar /usr/bin/llvm-ar-18 100
-          sudo update-alternatives --install /usr/bin/llvm-nm llvm-nm /usr/bin/llvm-nm-18 100
-          sudo update-alternatives --install /usr/bin/llvm-objcopy llvm-objcopy /usr/bin/llvm-objcopy-18 100
-          sudo update-alternatives --install /usr/bin/llvm-strip llvm-strip /usr/bin/llvm-strip-18 100
+          aarch64-linux-gnu-gcc --version
           clang --version
           ld.lld --version
 
@@ -80,13 +72,11 @@ jobs:
         run: |
           export KBUILD_BUILD_USER=nh-builder
           export KBUILD_BUILD_HOST=github
-          make O=out CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 ARCH=arm64 vendor/nh_defconfig
-          make O=out CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 ARCH=arm64 -j$(nproc) 2>&1 | tee build.log
-          ls -lh out/arch/arm64/boot/Image || echo "Image not found, checking build.log..."
-          tail -50 build.log
+          set -o pipefail
+          make O=out CROSS_COMPILE=aarch64-linux-gnu- ARCH=arm64 vendor/nh_defconfig 2>&1 | tee build.log
+          make O=out CROSS_COMPILE=aarch64-linux-gnu- ARCH=arm64 -j$(nproc) 2>&1 | tee -a build.log
 
       - name: Package AnyKernel3
-        if: success()
         run: |
           cp out/arch/arm64/boot/Image .
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git /tmp/ak3
@@ -103,7 +93,6 @@ jobs:
           ls -lh nethunter-citrus-usb-nrf52.zip
 
       - name: Upload artifact
-        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: nethunter-citrus-kernel
