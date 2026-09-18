@@ -28,19 +28,15 @@ jobs:
             libxml2 libxslt1-dev lz4 zip zlib1g-dev \
             python3 \
             clang lld llvm llvm-dev
+          # python2 not available on jammy, symlink python3 as fallback for mkdtboimg.py
+          sudo ln -sf /usr/bin/python3 /usr/bin/python2
+          sudo ln -sf /usr/bin/python3 /usr/bin/python
 
       - name: Verify toolchain
         run: |
-          echo "=== GCC ==="
           aarch64-linux-gnu-gcc --version | head -1
-          echo "=== Clang ==="
           clang --version | head -1
-          echo "=== LLVM tools ==="
-          which llvm-ar && llvm-ar --version | head -1
-          which llvm-nm && llvm-nm --version | head -1
-          which llvm-objcopy && llvm-objcopy --version | head -1
-          which llvm-strip && llvm-strip --version | head -1
-          which ld.lld && ld.lld --version | head -1
+          python2 --version
 
       - name: Apply USB Serial + NRF52 BLE config
         run: |
@@ -78,13 +74,11 @@ jobs:
         run: |
           export KBUILD_BUILD_USER=nh-builder
           export KBUILD_BUILD_HOST=github
-          export PATH=/usr/lib/llvm-14/bin:$PATH
           set -o pipefail
           make O=out CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 IAS=1 ARCH=arm64 vendor/nh_defconfig 2>&1 | tee build.log
-          make O=out CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 IAS=1 ARCH=arm64 V=1 -j$(nproc) 2>&1 | tee -a build.log
+          make O=out CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 IAS=1 ARCH=arm64 -j$(nproc) 2>&1 | tee -a build.log
 
       - name: Package AnyKernel3
-        if: success()
         run: |
           cp out/arch/arm64/boot/Image .
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git /tmp/ak3
@@ -101,7 +95,6 @@ jobs:
           ls -lh nethunter-citrus-usb-nrf52.zip
 
       - name: Upload artifact
-        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: nethunter-citrus-kernel
