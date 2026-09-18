@@ -28,30 +28,29 @@ jobs:
             libxml2 libxslt1-dev lz4 zip zlib1g-dev \
             python3 \
             clang lld llvm llvm-dev
+          sudo ln -sf /usr/bin/python3 /usr/bin/python2
 
-      - name: Fix Python 2 references for Python 3 compatibility
+      - name: Fix Python 2 scripts for Python 3
         run: |
-          # 1. Change PYTHON2 = python2 -> python3 in root Makefile
+          # Patch root Makefile: PYTHON2 = python3
           sed -i 's/^PYTHON2\s*=\s*python2$/PYTHON2\t\t= python3/' Makefile
+          echo "PYTHON2 patched to: $(grep '^PYTHON2' Makefile)"
 
-          # 2. Fix mkdtboimg.py for Python 3
-          python3 -c "
+          # Comprehensive Python 3 patch for mkdtboimg.py
+          python3 << 'PATCH'
           with open('scripts/dtc/libfdt/mkdtboimg.py', 'r') as f:
               content = f.read()
-          # Fix xrange -> range
           content = content.replace('xrange(', 'range(')
-          # Fix array('c', ...) -> bytearray  (struct.pack_into works with bytearray)
-          content = content.replace(\"array('c', \", 'bytearray(b')
-          content = content.replace(\"array('c',\", 'bytearray(b')
+          content = content.replace("array('c', ' ' * self.__metadata_size)",
+                                    "bytearray(b' ' * self.__metadata_size)")
+          content = content.replace('dt_entry_buf = ""', 'dt_entry_buf = b""')
           with open('scripts/dtc/libfdt/mkdtboimg.py', 'w') as f:
               f.write(content)
-          print('Patched mkdtboimg.py')
-          "
+          print('mkdtboimg.py patched for Python 3')
+          PATCH
 
-          # Verify python3 is accessible as python2
-          sudo ln -sf /usr/bin/python3 /usr/bin/python2
-          echo "PYTHON2 in Makefile:"
-          grep '^PYTHON2' Makefile
+          # Verify no Python 2 syntax remains
+          python3 -c "import ast; ast.parse(open('scripts/dtc/libfdt/mkdtboimg.py').read()); print('Syntax OK')"
 
       - name: Apply USB Serial + NRF52 BLE config
         run: |
