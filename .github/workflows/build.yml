@@ -27,14 +27,12 @@ jobs:
             lib32ncurses5-dev lib32readline-dev libssl-dev \
             libxml2 libxslt1-dev lz4 zip zlib1g-dev \
             python3 python3-pip python3-venv \
-            libncurses-dev \
-            clang lld llvm
+            libncurses-dev
 
       - name: Verify toolchain
         run: |
           aarch64-linux-gnu-gcc --version
-          clang --version
-          ld.lld --version
+          gcc --version
 
       - name: Apply USB Serial + NRF52 BLE config
         run: |
@@ -73,8 +71,8 @@ jobs:
           export KBUILD_BUILD_USER=nh-builder
           export KBUILD_BUILD_HOST=github
           set -o pipefail
-          make O=out CROSS_COMPILE=aarch64-linux-gnu- ARCH=arm64 vendor/nh_defconfig 2>&1 | tee build.log
-          make O=out CROSS_COMPILE=aarch64-linux-gnu- ARCH=arm64 -j$(nproc) 2>&1 | tee -a build.log
+          make O=out CC=gcc CROSS_COMPILE=aarch64-linux-gnu- ARCH=arm64 vendor/nh_defconfig 2>&1 | tee build.log
+          make O=out CC=gcc CROSS_COMPILE=aarch64-linux-gnu- ARCH=arm64 -j$(nproc) 2>&1 | tee -a build.log
 
       - name: Package AnyKernel3
         run: |
