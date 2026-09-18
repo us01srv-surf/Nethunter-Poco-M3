@@ -28,23 +28,30 @@ jobs:
             libxml2 libxslt1-dev lz4 zip zlib1g-dev \
             python3 \
             clang lld llvm llvm-dev
-          # kernel Makefile calls 'python2' — symlink to python3
-          sudo ln -sf /usr/bin/python3 /usr/bin/python2
 
-      - name: Patch mkdtboimg.py for Python 3
+      - name: Fix Python 2 references for Python 3 compatibility
         run: |
+          # 1. Change PYTHON2 = python2 -> python3 in root Makefile
+          sed -i 's/^PYTHON2\s*=\s*python2$/PYTHON2\t\t= python3/' Makefile
+
+          # 2. Fix mkdtboimg.py for Python 3
           python3 -c "
           with open('scripts/dtc/libfdt/mkdtboimg.py', 'r') as f:
               content = f.read()
-          content = content.replace('xrange', 'range')
-          content = content.replace('print ', 'print(')
-          content = content.replace('print(print(', 'print(')
+          # Fix xrange -> range
+          content = content.replace('xrange(', 'range(')
+          # Fix array('c', ...) -> bytearray  (struct.pack_into works with bytearray)
+          content = content.replace(\"array('c', \", 'bytearray(b')
+          content = content.replace(\"array('c',\", 'bytearray(b')
           with open('scripts/dtc/libfdt/mkdtboimg.py', 'w') as f:
               f.write(content)
-          print('Patched mkdtboimg.py for Python 3')
+          print('Patched mkdtboimg.py')
           "
-          # Verify it runs
-          python3 scripts/dtc/libfdt/mkdtboimg.py 2>&1 | head -3 || true
+
+          # Verify python3 is accessible as python2
+          sudo ln -sf /usr/bin/python3 /usr/bin/python2
+          echo "PYTHON2 in Makefile:"
+          grep '^PYTHON2' Makefile
 
       - name: Apply USB Serial + NRF52 BLE config
         run: |
