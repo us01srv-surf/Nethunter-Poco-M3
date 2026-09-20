@@ -62,27 +62,49 @@ jobs:
           echo "=== Generating .config from vendor/nh_defconfig ==="
           make O=out CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 IAS=1 ARCH=arm64 vendor/nh_defconfig
 
-          # Step 2: VERIFY and FORCE critical configs
-          echo "=== Checking .config for USB_ACM ==="
-          if ! grep -q "CONFIG_USB_ACM=y" out/.config; then
-            echo "WARNING: CONFIG_USB_ACM=y NOT found in .config! Forcing it..."
-            # Force all USB serial configs using scripts/config
-            scripts/config --file out/.config --enable USB_ACM
-            scripts/config --file out/.config --enable USB_SERIAL
-            scripts/config --file out/.config --enable USB_SERIAL_GENERIC
-            scripts/config --file out/.config --enable USB_SERIAL_CDC_ACM
-            scripts/config --file out/.config --enable USB_SERIAL_CH341
-            scripts/config --file out/.config --enable USB_SERIAL_CP210X
-            scripts/config --file out/.config --enable USB_SERIAL_FTDI_SIO
-            scripts/config --file out/.config --enable USB_SERIAL_OPTION
-            scripts/config --file out/.config --enable USB_SERIAL_PL2303
-            # Re-run olddefconfig to resolve dependencies
-            make O=out CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 IAS=1 ARCH=arm64 olddefconfig
-            echo "=== After forcing, checking again ==="
-          fi
+          # Step 2: ALWAYS force critical configs (defconfig may have them but implicit config processing strips them)
+          echo "=== Forcing critical USB/BT/TTY configs ==="
+          scripts/config --file out/.config --enable USB_ACM
+          scripts/config --file out/.config --enable USB_SERIAL
+          scripts/config --file out/.config --enable USB_SERIAL_GENERIC
+          scripts/config --file out/.config --enable USB_SERIAL_CDC_ACM
+          scripts/config --file out/.config --enable USB_SERIAL_CH341
+          scripts/config --file out/.config --enable USB_SERIAL_CP210X
+          scripts/config --file out/.config --enable USB_SERIAL_FTDI_SIO
+          scripts/config --file out/.config --enable USB_SERIAL_OPTION
+          scripts/config --file out/.config --enable USB_SERIAL_PL2303
+          scripts/config --file out/.config --enable USB
+          scripts/config --file out/.config --enable USB_SUPPORT
+          scripts/config --file out/.config --enable TTY
+          scripts/config --file out/.config --enable BT
+          scripts/config --file out/.config --enable BT_HCIBTUSB
+          scripts/config --file out/.config --enable BT_HCIUART
+          scripts/config --file out/.config --enable BT_HCIUSB
 
-          # Step 3: Final verification - FAIL build if still missing
-          echo "=== Final .config verification ==="
+          # Step 3: Resolve dependencies via olddefconfig
+          echo "=== Running olddefconfig to resolve dependencies ==="
+          make O=out CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 IAS=1 ARCH=arm64 olddefconfig
+
+          # Step 4: Re-force after olddefconfig (it may strip configs that have hidden deps)
+          echo "=== Re-forcing configs after olddefconfig ==="
+          scripts/config --file out/.config --enable USB_ACM
+          scripts/config --file out/.config --enable USB_SERIAL
+          scripts/config --file out/.config --enable USB_SERIAL_GENERIC
+          scripts/config --file out/.config --enable USB_SERIAL_CDC_ACM
+          scripts/config --file out/.config --enable USB_SERIAL_CH341
+          scripts/config --file out/.config --enable USB_SERIAL_CP210X
+          scripts/config --file out/.config --enable USB_SERIAL_FTDI_SIO
+          scripts/config --file out/.config --enable USB_SERIAL_OPTION
+          scripts/config --file out/.config --enable USB_SERIAL_PL2303
+          scripts/config --file out/.config --enable BT_HCIBTUSB
+          scripts/config --file out/.config --enable BT_HCIUART
+          scripts/config --file out/.config --enable BT_HCIUSB
+
+          # Step 5: Run olddefconfig again to resolve any new deps
+          make O=out CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 IAS=1 ARCH=arm64 olddefconfig
+
+          # Step 6: Final verification - FAIL build if critical configs missing
+          echo "=== Pre-build .config verification ==="
           echo "USB_ACM: $(grep 'CONFIG_USB_ACM=' out/.config || echo 'MISSING!')"
           echo "USB_SERIAL: $(grep 'CONFIG_USB_SERIAL=' out/.config || echo 'MISSING!')"
           echo "USB_SERIAL_CDC_ACM: $(grep 'CONFIG_USB_SERIAL_CDC_ACM=' out/.config || echo 'MISSING!')"
@@ -93,20 +115,43 @@ jobs:
 
           if ! grep -q "CONFIG_USB_ACM=y" out/.config; then
             echo "FATAL: USB_ACM still not enabled after forcing!"
+            # Dump full USB/TTY config for debugging
+            echo "=== Full USB/TTY config dump ==="
+            grep -E 'CONFIG_USB|CONFIG_TTY|CONFIG_BT' out/.config | head -40
             exit 1
           fi
 
-          # Step 4: Build
+          # Step 7: Build
           echo "=== Starting kernel build ==="
           make O=out CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 IAS=1 ARCH=arm64 -j$(nproc) 2>&1 | tee build.log
 
-          # Step 5: Verify built Image contains the driver
+          # Step 8: POST-BUILD config dump (critical - shows what actually got compiled)
+          echo "=== POST-BUILD .config verification (what actually compiled) ==="
+          echo "USB_ACM: $(grep 'CONFIG_USB_ACM=' out/.config || echo 'MISSING!')"
+          echo "USB_SERIAL: $(grep 'CONFIG_USB_SERIAL=' out/.config || echo 'MISSING!')"
+          echo "USB: $(grep '^CONFIG_USB=' out/.config || echo 'MISSING!')"
+          echo "TTY: $(grep '^CONFIG_TTY=' out/.config || echo 'MISSING!')"
+          # Dump ALL USB-related configs for debugging
+          echo "=== All USB configs in final .config ==="
+          grep -E '^CONFIG_USB' out/.config
+
+          # Step 9: Verify built Image contains the driver
           echo "=== Verifying built Image ==="
-          if strings out/arch/arm64/boot/Image | grep -q "acm_probe\|cdc_acm_init\|USB Modem"; then
-            echo "SUCCESS: USB_ACM driver symbols found in Image!"
+          if strings out/arch/arm64/boot/Image | grep -q "cdc_acm"; then
+            echo "SUCCESS: cdc_acm string found in Image!"
           else
-            echo "WARNING: USB_ACM driver symbols NOT found in Image. Checking strings..."
-            strings out/arch/arm64/boot/Image | grep -i "acm\|cdc\|serial" | head -20
+            echo "WARNING: cdc_acm NOT found in Image!"
+          fi
+          if strings out/arch/arm64/boot/Image | grep -q "USB Modem"; then
+            echo "SUCCESS: USB Modem string found in Image!"
+          else
+            echo "WARNING: USB Modem NOT found in Image!"
+          fi
+          # Also check for USB serial driver
+          if strings out/arch/arm64/boot/Image | grep -q "usb_serial"; then
+            echo "SUCCESS: usb_serial string found in Image!"
+          else
+            echo "WARNING: usb_serial NOT found in Image!"
           fi
 
       - name: Package AnyKernel3
@@ -122,9 +167,12 @@ jobs:
           # Configure anykernel.sh for POCO M3 (citrus/bengal)
           sed -i 's/do.devicecheck=1/do.devicecheck=0/' nethunter-kernel/anykernel.sh
           sed -i 's/is_slot_device=1/is_slot_device=0/' nethunter-kernel/anykernel.sh
-          # Uncomment and set the correct block device for citrus
-          sed -i 's|^#block=/dev/block/bootdevice/by-name/boot|block=/dev/block/bootdevice/by-name/boot|' nethunter-kernel/anykernel.sh
+          # Set correct block device for citrus
+          sed -i 's|^#block=.*|block=/dev/block/bootdevice/by-name/boot|' nethunter-kernel/anykernel.sh
+          sed -i 's|^block=.*|block=/dev/block/bootdevice/by-name/boot|' nethunter-kernel/anykernel.sh
           sed -i 's|^#is_slot_device=0|is_slot_device=0|' nethunter-kernel/anykernel.sh
+          # Remove Galaxy Nexus specific patches
+          sed -i '/init.tuna.rc/d; /fstab.tuna/d; /cpuctl cpu,timer_slack/d; /nodiratime barrier=0/d; /bootscript/d; /usbdisk/d' nethunter-kernel/anykernel.sh
 
           cd nethunter-kernel
           zip -r9 ../nethunter-citrus-usb-nrf52.zip .
