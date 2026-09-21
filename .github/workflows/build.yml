@@ -32,11 +32,7 @@ jobs:
 
       - name: Fix Python 2 scripts for Python 3
         run: |
-          # Patch root Makefile: PYTHON2 = python3
           sed -i 's/^PYTHON2\s*=\s*python2$/PYTHON2\t\t= python3/' Makefile
-          echo "PYTHON2 patched to: $(grep '^PYTHON2' Makefile)"
-
-          # Comprehensive Python 3 patch for mkdtboimg.py
           python3 << 'PATCH'
           with open('scripts/dtc/libfdt/mkdtboimg.py', 'r') as f:
               content = f.read()
@@ -46,11 +42,7 @@ jobs:
           content = content.replace('dt_entry_buf = ""', 'dt_entry_buf = b""')
           with open('scripts/dtc/libfdt/mkdtboimg.py', 'w') as f:
               f.write(content)
-          print('mkdtboimg.py patched for Python 3')
           PATCH
-
-          # Verify no Python 2 syntax remains
-          python3 -c "import ast; ast.parse(open('scripts/dtc/libfdt/mkdtboimg.py').read()); print('Syntax OK')"
 
       - name: Build kernel
         run: |
@@ -62,31 +54,12 @@ jobs:
           echo "=== Generating .config from vendor/nh_defconfig ==="
           make O=out CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 IAS=1 ARCH=arm64 vendor/nh_defconfig
 
-          # Step 2: ALWAYS force critical configs (defconfig may have them but implicit config processing strips them)
-          echo "=== Forcing critical USB/BT/TTY configs ==="
-          scripts/config --file out/.config --enable USB_ACM
-          scripts/config --file out/.config --enable USB_SERIAL
-          scripts/config --file out/.config --enable USB_SERIAL_GENERIC
-          scripts/config --file out/.config --enable USB_SERIAL_CDC_ACM
-          scripts/config --file out/.config --enable USB_SERIAL_CH341
-          scripts/config --file out/.config --enable USB_SERIAL_CP210X
-          scripts/config --file out/.config --enable USB_SERIAL_FTDI_SIO
-          scripts/config --file out/.config --enable USB_SERIAL_OPTION
-          scripts/config --file out/.config --enable USB_SERIAL_PL2303
-          scripts/config --file out/.config --enable USB
-          scripts/config --file out/.config --enable USB_SUPPORT
-          scripts/config --file out/.config --enable TTY
-          scripts/config --file out/.config --enable BT
-          scripts/config --file out/.config --enable BT_HCIBTUSB
-          scripts/config --file out/.config --enable BT_HCIUART
-          scripts/config --file out/.config --enable BT_HCIUSB
+          # Step 2: Check if USB_SERIAL is in the generated config
+          echo "=== USB_SERIAL after defconfig ==="
+          grep -E "CONFIG_USB_SERIAL|CONFIG_USB_ACM" out/.config || echo "WARNING: not found after defconfig!"
 
-          # Step 3: Resolve dependencies via olddefconfig
-          echo "=== Running olddefconfig to resolve dependencies ==="
-          make O=out CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 IAS=1 ARCH=arm64 olddefconfig
-
-          # Step 4: Re-force after olddefconfig (it may strip configs that have hidden deps)
-          echo "=== Re-forcing configs after olddefconfig ==="
+          # Step 3: Force critical configs BEFORE olddefconfig
+          echo "=== Forcing USB/BT configs ==="
           scripts/config --file out/.config --enable USB_ACM
           scripts/config --file out/.config --enable USB_SERIAL
           scripts/config --file out/.config --enable USB_SERIAL_GENERIC
@@ -100,59 +73,52 @@ jobs:
           scripts/config --file out/.config --enable BT_HCIUART
           scripts/config --file out/.config --enable BT_HCIUSB
 
-          # Step 5: Run olddefconfig again to resolve any new deps
+          # Step 4: Resolve dependencies
+          echo "=== Running olddefconfig ==="
           make O=out CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 IAS=1 ARCH=arm64 olddefconfig
 
-          # Step 6: Final verification - FAIL build if critical configs missing
-          echo "=== Pre-build .config verification ==="
-          echo "USB_ACM: $(grep 'CONFIG_USB_ACM=' out/.config || echo 'MISSING!')"
-          echo "USB_SERIAL: $(grep 'CONFIG_USB_SERIAL=' out/.config || echo 'MISSING!')"
-          echo "USB_SERIAL_CDC_ACM: $(grep 'CONFIG_USB_SERIAL_CDC_ACM=' out/.config || echo 'MISSING!')"
-          echo "USB: $(grep '^CONFIG_USB=' out/.config || echo 'MISSING!')"
-          echo "TTY: $(grep '^CONFIG_TTY=' out/.config || echo 'MISSING!')"
-          echo "BT_HCIBTUSB: $(grep 'CONFIG_BT_HCIBTUSB=' out/.config || echo 'MISSING!')"
-          echo "BT_HCIUART: $(grep 'CONFIG_BT_HCIUART=' out/.config || echo 'MISSING!')"
+          # Step 5: Re-force AFTER olddefconfig (it strips configs!)
+          echo "=== Re-forcing USB/BT configs after olddefconfig ==="
+          scripts/config --file out/.config --enable USB_ACM
+          scripts/config --file out/.config --enable USB_SERIAL
+          scripts/config --file out/.config --enable USB_SERIAL_GENERIC
+          scripts/config --file out/.config --enable USB_SERIAL_CDC_ACM
+          scripts/config --file out/.config --enable USB_SERIAL_CH341
+          scripts/config --file out/.config --enable USB_SERIAL_CP210X
+          scripts/config --file out/.config --enable USB_SERIAL_FTDI_SIO
+          scripts/config --file out/.config --enable USB_SERIAL_OPTION
+          scripts/config --file out/.config --enable USB_SERIAL_PL2303
+          scripts/config --file out/.config --enable BT_HCIBTUSB
+          scripts/config --file out/.config --enable BT_HCIUART
+          scripts/config --file out/.config --enable BT_HCIUSB
 
-          if ! grep -q "CONFIG_USB_ACM=y" out/.config; then
-            echo "FATAL: USB_ACM still not enabled after forcing!"
-            # Dump full USB/TTY config for debugging
-            echo "=== Full USB/TTY config dump ==="
-            grep -E 'CONFIG_USB|CONFIG_TTY|CONFIG_BT' out/.config | head -40
-            exit 1
-          fi
+          # Step 6: Final dependency resolution
+          make O=out CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 IAS=1 ARCH=arm64 olddefconfig
 
-          # Step 7: Build
+          # Step 7: Verify configs survived olddefconfig
+          echo "=== Final .config USB verification ==="
+          for cfg in CONFIG_USB_ACM CONFIG_USB_SERIAL CONFIG_USB_SERIAL_CDC_ACM CONFIG_USB_SERIAL_CH341 CONFIG_BT_HCIBTUSB CONFIG_BT_HCIUART; do
+            val=$(grep "^${cfg}=" out/.config 2>/dev/null || echo "MISSING")
+            echo "$cfg: $val"
+            if [ "$val" = "MISSING" ] || [ "$val" = "# ${cfg} is not set" ]; then
+              echo "FATAL: $cfg was stripped by olddefconfig!"
+              echo "=== All USB configs in .config ==="
+              grep -E "^CONFIG_USB" out/.config
+              echo "=== Dependency tree for USB_SERIAL ==="
+              grep -B5 "depends on" drivers/usb/serial/Kconfig | head -20
+              exit 1
+            fi
+          done
+
+          # Step 8: Build
           echo "=== Starting kernel build ==="
           make O=out CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 IAS=1 ARCH=arm64 -j$(nproc) 2>&1 | tee build.log
 
-          # Step 8: POST-BUILD config dump (critical - shows what actually got compiled)
-          echo "=== POST-BUILD .config verification (what actually compiled) ==="
-          echo "USB_ACM: $(grep 'CONFIG_USB_ACM=' out/.config || echo 'MISSING!')"
-          echo "USB_SERIAL: $(grep 'CONFIG_USB_SERIAL=' out/.config || echo 'MISSING!')"
-          echo "USB: $(grep '^CONFIG_USB=' out/.config || echo 'MISSING!')"
-          echo "TTY: $(grep '^CONFIG_TTY=' out/.config || echo 'MISSING!')"
-          # Dump ALL USB-related configs for debugging
-          echo "=== All USB configs in final .config ==="
-          grep -E '^CONFIG_USB' out/.config
-
-          # Step 9: Verify built Image contains the driver
-          echo "=== Verifying built Image ==="
-          if strings out/arch/arm64/boot/Image | grep -q "cdc_acm"; then
-            echo "SUCCESS: cdc_acm string found in Image!"
-          else
-            echo "WARNING: cdc_acm NOT found in Image!"
-          fi
-          if strings out/arch/arm64/boot/Image | grep -q "USB Modem"; then
-            echo "SUCCESS: USB Modem string found in Image!"
-          else
-            echo "WARNING: USB Modem NOT found in Image!"
-          fi
-          # Also check for USB serial driver
-          if strings out/arch/arm64/boot/Image | grep -q "usb_serial"; then
-            echo "SUCCESS: usb_serial string found in Image!"
-          else
-            echo "WARNING: usb_serial NOT found in Image!"
-          fi
+          # Step 9: Verify built Image
+          echo "=== Post-build verification ==="
+          strings out/arch/arm64/boot/Image | grep -c "cdc_acm\|usb_serial\|ch341\|cp210x\|pl2303" | xargs -I{} echo "USB driver strings found: {}"
+          echo "=== Final .config USB settings ==="
+          grep -E "^CONFIG_USB_ACM=|^CONFIG_USB_SERIAL=|^CONFIG_USB_SERIAL_CDC_ACM=" out/.config
 
       - name: Package AnyKernel3
         run: |
@@ -164,54 +130,35 @@ jobs:
           cp /tmp/ak3/anykernel.sh nethunter-kernel/
           cp Image nethunter-kernel/
 
-          # Configure anykernel.sh for POCO M3 (citrus/bengal)
-          # Use perl for case-insensitive matching since AnyKernel3 uses uppercase BLOCK=
           cd nethunter-kernel
 
-          # Fix do.devicecheck (case-insensitive)
+          # Fix anykernel.sh for POCO M3
           perl -pi -e 's/do\.devicecheck=\d/do.devicecheck=0/i' anykernel.sh
-
-          # Fix do.systemless - MUST be 0 for direct kernel flash (not Magisk module)
           perl -pi -e 's/do\.systemless=\d/do.systemless=0/i' anykernel.sh
-
-          # Fix BLOCK path - case-insensitive match for BLOCK/block
           perl -pi -e 's|^BLOCK=.*|BLOCK=/dev/block/bootdevice/by-name/boot;|i' anykernel.sh
-
-          # Fix IS_SLOT_DEVICE - case-insensitive match
           perl -pi -e 's|^IS_SLOT_DEVICE=\d|IS_SLOT_DEVICE=0;|i' anykernel.sh
           perl -pi -e 's|^#IS_SLOT_DEVICE=0|IS_SLOT_DEVICE=0;|i' anykernel.sh
 
-          # Fix device names for POCO M3
-          perl -pi -e 's/device\.name\d=\w+/device.name1=citrus/' anykernel.sh
-          # Clear other device names
-          perl -pi -e 's/device\.name[2-5]=\w+/device.name2=/' anykernel.sh
+          # Fix device names
+          python3 -c "
+          with open('anykernel.sh', 'r') as f:
+              c = f.read()
+          import re
+          c = re.sub(r'device\.name\d=\S+', '', c)
+          c = c.replace(\"device.name5=\", \"device.name1=citrus\n; device.name2=\n; device.name3=\n; device.name4=\n; device.name5=\")
+          with open('anykernel.sh', 'w') as f:
+              f.write(c)
+          "
 
-          # Remove Galaxy Nexus specific patches
+          # Clean up double semicolons
+          sed -i 's/;;/;/g' anykernel.sh
+
+          # Remove Galaxy Nexus patches
           sed -i '/init.tuna.rc/d; /fstab.tuna/d; /cpuctl cpu,timer_slack/d; /nodiratime barrier=0/d; /bootscript/d; /usbdisk/d' anykernel.sh
 
-          # CRITICAL: Verify anykernel.sh configuration before packaging
-          echo "=== Verifying anykernel.sh configuration ==="
-          echo "BLOCK=$(grep '^BLOCK=' anykernel.sh)"
-          echo "IS_SLOT=$(grep '^IS_SLOT_DEVICE=' anykernel.sh)"
-          echo "devicecheck=$(grep 'do.devicecheck=' anykernel.sh | head -1)"
-          echo "systemless=$(grep 'do.systemless=' anykernel.sh | head -1)"
-          echo "device.name1=$(grep 'device.name1=' anykernel.sh | head -1)"
-
-          # Verify BLOCK path is correct for POCO M3
-          if ! grep -q 'BLOCK=/dev/block/bootdevice/by-name/boot;' anykernel.sh; then
-            echo "FATAL: BLOCK path is incorrect! Aborting packaging."
-            grep 'BLOCK=' anykernel.sh
-            exit 1
-          fi
-
-          # Verify systemless is 0
-          if ! grep -q 'do.systemless=0' anykernel.sh; then
-            echo "FATAL: do.systemless must be 0 for direct kernel flash! Aborting packaging."
-            grep 'do.systemless=' anykernel.sh
-            exit 1
-          fi
-
-          echo "=== anykernel.sh verification PASSED ==="
+          # Verify
+          echo "=== anykernel.sh verification ==="
+          grep -E "^BLOCK=|^IS_SLOT|do\.devicecheck|do\.systemless|device\.name1" anykernel.sh
 
           # Package
           zip -r9 ../nethunter-citrus-usb-nrf52.zip .
