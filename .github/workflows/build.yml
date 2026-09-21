@@ -165,16 +165,55 @@ jobs:
           cp Image nethunter-kernel/
 
           # Configure anykernel.sh for POCO M3 (citrus/bengal)
-          sed -i 's/do.devicecheck=1/do.devicecheck=0/' nethunter-kernel/anykernel.sh
-          sed -i 's/is_slot_device=1/is_slot_device=0/' nethunter-kernel/anykernel.sh
-          # Set correct block device for citrus
-          sed -i 's|^#block=.*|block=/dev/block/bootdevice/by-name/boot|' nethunter-kernel/anykernel.sh
-          sed -i 's|^block=.*|block=/dev/block/bootdevice/by-name/boot|' nethunter-kernel/anykernel.sh
-          sed -i 's|^#is_slot_device=0|is_slot_device=0|' nethunter-kernel/anykernel.sh
-          # Remove Galaxy Nexus specific patches
-          sed -i '/init.tuna.rc/d; /fstab.tuna/d; /cpuctl cpu,timer_slack/d; /nodiratime barrier=0/d; /bootscript/d; /usbdisk/d' nethunter-kernel/anykernel.sh
-
+          # Use perl for case-insensitive matching since AnyKernel3 uses uppercase BLOCK=
           cd nethunter-kernel
+
+          # Fix do.devicecheck (case-insensitive)
+          perl -pi -e 's/do\.devicecheck=\d/do.devicecheck=0/i' anykernel.sh
+
+          # Fix do.systemless - MUST be 0 for direct kernel flash (not Magisk module)
+          perl -pi -e 's/do\.systemless=\d/do.systemless=0/i' anykernel.sh
+
+          # Fix BLOCK path - case-insensitive match for BLOCK/block
+          perl -pi -e 's|^BLOCK=.*|BLOCK=/dev/block/bootdevice/by-name/boot;|i' anykernel.sh
+
+          # Fix IS_SLOT_DEVICE - case-insensitive match
+          perl -pi -e 's|^IS_SLOT_DEVICE=\d|IS_SLOT_DEVICE=0;|i' anykernel.sh
+          perl -pi -e 's|^#IS_SLOT_DEVICE=0|IS_SLOT_DEVICE=0;|i' anykernel.sh
+
+          # Fix device names for POCO M3
+          perl -pi -e 's/device\.name\d=\w+/device.name1=citrus/' anykernel.sh
+          # Clear other device names
+          perl -pi -e 's/device\.name[2-5]=\w+/device.name2=/' anykernel.sh
+
+          # Remove Galaxy Nexus specific patches
+          sed -i '/init.tuna.rc/d; /fstab.tuna/d; /cpuctl cpu,timer_slack/d; /nodiratime barrier=0/d; /bootscript/d; /usbdisk/d' anykernel.sh
+
+          # CRITICAL: Verify anykernel.sh configuration before packaging
+          echo "=== Verifying anykernel.sh configuration ==="
+          echo "BLOCK=$(grep '^BLOCK=' anykernel.sh)"
+          echo "IS_SLOT=$(grep '^IS_SLOT_DEVICE=' anykernel.sh)"
+          echo "devicecheck=$(grep 'do.devicecheck=' anykernel.sh | head -1)"
+          echo "systemless=$(grep 'do.systemless=' anykernel.sh | head -1)"
+          echo "device.name1=$(grep 'device.name1=' anykernel.sh | head -1)"
+
+          # Verify BLOCK path is correct for POCO M3
+          if ! grep -q 'BLOCK=/dev/block/bootdevice/by-name/boot;' anykernel.sh; then
+            echo "FATAL: BLOCK path is incorrect! Aborting packaging."
+            grep 'BLOCK=' anykernel.sh
+            exit 1
+          fi
+
+          # Verify systemless is 0
+          if ! grep -q 'do.systemless=0' anykernel.sh; then
+            echo "FATAL: do.systemless must be 0 for direct kernel flash! Aborting packaging."
+            grep 'do.systemless=' anykernel.sh
+            exit 1
+          fi
+
+          echo "=== anykernel.sh verification PASSED ==="
+
+          # Package
           zip -r9 ../nethunter-citrus-usb-nrf52.zip .
           cd ..
           ls -lh nethunter-citrus-usb-nrf52.zip
