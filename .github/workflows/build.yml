@@ -97,7 +97,7 @@ jobs:
 
           # Step 7: Verify configs survived olddefconfig
           echo "=== Final .config USB verification ==="
-          for cfg in CONFIG_USB_ACM CONFIG_USB_SERIAL CONFIG_USB_SERIAL_CDC_ACM CONFIG_USB_SERIAL_CH341 CONFIG_BT_HCIBTUSB CONFIG_BT_HCIUART; do
+          for cfg in CONFIG_USB_ACM CONFIG_USB_SERIAL CONFIG_USB_SERIAL_CH341 CONFIG_USB_SERIAL_CH341 CONFIG_BT_HCIBTUSB CONFIG_BT_HCIUART; do
             val=$(grep "^${cfg}=" out/.config 2>/dev/null || echo "MISSING")
             echo "$cfg: $val"
             if [ "$val" = "MISSING" ] || [ "$val" = "# ${cfg} is not set" ]; then
@@ -118,7 +118,7 @@ jobs:
           echo "=== Post-build verification ==="
           strings out/arch/arm64/boot/Image | grep -c "cdc_acm\|usb_serial\|ch341\|cp210x\|pl2303" | xargs -I{} echo "USB driver strings found: {}"
           echo "=== Final .config USB settings ==="
-          grep -E "^CONFIG_USB_ACM=|^CONFIG_USB_SERIAL=|^CONFIG_USB_SERIAL_CDC_ACM=" out/.config
+          grep -E "^CONFIG_USB_ACM=|^CONFIG_USB_SERIAL=|^CONFIG_USB_SERIAL_CH341=" out/.config
 
       - name: Package AnyKernel3
         run: |
