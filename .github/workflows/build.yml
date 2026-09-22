@@ -50,15 +50,11 @@ jobs:
           export KBUILD_BUILD_HOST=github
           set -e
 
-          # Step 1: Generate .config from defconfig
+          # Step 1: Generate .config from defconfig (no olddefconfig!)
           echo "=== Generating .config from vendor/nh_defconfig ==="
           make O=out CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 IAS=1 ARCH=arm64 vendor/nh_defconfig
 
-          # Step 2: Check if USB_SERIAL is in the generated config
-          echo "=== USB_SERIAL after defconfig ==="
-          grep -E "CONFIG_USB_SERIAL|CONFIG_USB_ACM" out/.config || echo "WARNING: not found after defconfig!"
-
-          # Step 3: Force critical configs BEFORE olddefconfig
+          # Step 2: Force critical configs
           echo "=== Forcing USB/BT configs ==="
           scripts/config --file out/.config --enable USB_ACM
           scripts/config --file out/.config --enable USB_SERIAL
@@ -73,48 +69,22 @@ jobs:
           scripts/config --file out/.config --enable BT_HCIUART
           scripts/config --file out/.config --enable BT_HCIUSB
 
-          # Step 4: Resolve dependencies
-          echo "=== Running olddefconfig ==="
-          make O=out CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 IAS=1 ARCH=arm64 olddefconfig
-
-          # Step 5: Re-force AFTER olddefconfig (it strips configs!)
-          echo "=== Re-forcing USB/BT configs after olddefconfig ==="
-          scripts/config --file out/.config --enable USB_ACM
-          scripts/config --file out/.config --enable USB_SERIAL
-          scripts/config --file out/.config --enable USB_SERIAL_GENERIC
-          scripts/config --file out/.config --enable USB_SERIAL_CDC_ACM
-          scripts/config --file out/.config --enable USB_SERIAL_CH341
-          scripts/config --file out/.config --enable USB_SERIAL_CP210X
-          scripts/config --file out/.config --enable USB_SERIAL_FTDI_SIO
-          scripts/config --file out/.config --enable USB_SERIAL_OPTION
-          scripts/config --file out/.config --enable USB_SERIAL_PL2303
-          scripts/config --file out/.config --enable BT_HCIBTUSB
-          scripts/config --file out/.config --enable BT_HCIUART
-          scripts/config --file out/.config --enable BT_HCIUSB
-
-          # Step 6: Final dependency resolution
-          make O=out CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 IAS=1 ARCH=arm64 olddefconfig
-
-          # Step 7: Verify configs survived olddefconfig
-          echo "=== Final .config USB verification ==="
-          for cfg in CONFIG_USB_ACM CONFIG_USB_SERIAL CONFIG_USB_SERIAL_CH341 CONFIG_USB_SERIAL_CH341 CONFIG_BT_HCIBTUSB CONFIG_BT_HCIUART; do
+          # Step 3: Verify configs before build
+          echo "=== Pre-build .config USB verification ==="
+          for cfg in CONFIG_USB_ACM CONFIG_USB_SERIAL CONFIG_USB_SERIAL_CH341 CONFIG_BT_HCIBTUSB CONFIG_BT_HCIUART; do
             val=$(grep "^${cfg}=" out/.config 2>/dev/null || echo "MISSING")
             echo "$cfg: $val"
             if [ "$val" = "MISSING" ] || [ "$val" = "# ${cfg} is not set" ]; then
-              echo "FATAL: $cfg was stripped by olddefconfig!"
-              echo "=== All USB configs in .config ==="
-              grep -E "^CONFIG_USB" out/.config
-              echo "=== Dependency tree for USB_SERIAL ==="
-              grep -B5 "depends on" drivers/usb/serial/Kconfig | head -20
+              echo "FATAL: $cfg missing after forcing!"
               exit 1
             fi
           done
 
-          # Step 8: Build
+          # Step 4: Build directly (NO olddefconfig - it strips forced configs!)
           echo "=== Starting kernel build ==="
           make O=out CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 IAS=1 ARCH=arm64 -j$(nproc) 2>&1 | tee build.log
 
-          # Step 9: Verify built Image
+          # Step 5: Verify built Image
           echo "=== Post-build verification ==="
           strings out/arch/arm64/boot/Image | grep -c "cdc_acm\|usb_serial\|ch341\|cp210x\|pl2303" | xargs -I{} echo "USB driver strings found: {}"
           echo "=== Final .config USB settings ==="
