@@ -55,7 +55,10 @@ jobs:
           make O=out CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 IAS=1 ARCH=arm64 vendor/nh_defconfig
 
           # Step 2: Force critical configs
+          # IMPORTANT: USB must be =y (not =m) because USB_SERIAL/USB_ACM are
+          # tristate inside "if USB" — when USB=m, they can only be m, not y.
           echo "=== Forcing USB/BT configs ==="
+          scripts/config --file out/.config --enable USB
           scripts/config --file out/.config --enable USB_ACM
           scripts/config --file out/.config --enable USB_SERIAL
           scripts/config --file out/.config --enable USB_SERIAL_GENERIC
