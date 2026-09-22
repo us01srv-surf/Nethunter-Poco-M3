@@ -115,7 +115,7 @@ jobs:
               c = f.read()
           import re
           c = re.sub(r'device\.name\d=\S+', '', c)
-          c = c.replace(\"device.name5=\", \"device.name1=citrus\n; device.name2=\n; device.name3=\n; device.name4=\n; device.name5=\")
+          c = c.replace(\"device.name5=\", \"device.name1=citrus\")
           with open('anykernel.sh', 'w') as f:
               f.write(c)
           "
