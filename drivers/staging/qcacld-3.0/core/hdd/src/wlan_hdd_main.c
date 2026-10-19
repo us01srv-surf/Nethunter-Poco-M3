@@ -34,6 +34,8 @@
 #include <linux/etherdevice.h>
 #include <linux/firmware.h>
 #include <linux/kernel.h>
+#include <linux/cred.h>
+#include <linux/uidgid.h>
 #include <wlan_hdd_tx_rx.h>
 #include <wni_api.h>
 #include <wlan_hdd_cfg.h>
@@ -15472,6 +15474,17 @@ static ssize_t wlan_hdd_state_ctrl_param_write(struct file *filp,
 	int ret;
 	unsigned long rc;
 	struct hdd_context *hdd_ctx = cds_get_context(QDF_MODULE_ID_HDD);
+	bool monitor_active = false;
+
+	monitor_active = (hdd_get_conparam() == QDF_GLOBAL_MONITOR_MODE);
+	if (hdd_ctx) {
+		struct hdd_adapter *mon_adapter;
+
+		mon_adapter = hdd_get_adapter(hdd_ctx, QDF_MONITOR_MODE);
+		if (mon_adapter &&
+		    test_bit(DEVICE_IFACE_OPENED, &mon_adapter->event_flags))
+			monitor_active = true;
+	}
 
 	if (copy_from_user(buf, user_buf, 3)) {
 		pr_err("Failed to read buffer\n");
@@ -15479,13 +15492,26 @@ static ssize_t wlan_hdd_state_ctrl_param_write(struct file *filp,
 	}
 
 	if (strncmp(buf, wlan_off_str, strlen(wlan_off_str)) == 0) {
+		if (monitor_active &&
+		    !uid_eq(current_euid(), GLOBAL_ROOT_UID)) {
+			hdd_warn_rl("Ignoring framework wifi OFF while monitor mode is active (%s)",
+				    current->comm);
+			goto exit;
+		}
 		pr_debug("Wifi turning off from UI\n");
 		hdd_inform_wifi_off();
 		goto exit;
 	}
 
-	if (strncmp(buf, wlan_on_str, strlen(wlan_on_str)) == 0)
+	if (strncmp(buf, wlan_on_str, strlen(wlan_on_str)) == 0) {
+		if (monitor_active &&
+		    !uid_eq(current_euid(), GLOBAL_ROOT_UID)) {
+			hdd_warn_rl("Ignoring framework wifi ON while monitor mode is active (%s)",
+				    current->comm);
+			goto exit;
+		}
 		pr_info("Wifi Turning On from UI\n");
+	}
 
 	if (strncmp(buf, wlan_on_str, strlen(wlan_on_str)) != 0) {
 		pr_err("Invalid value received from framework");
