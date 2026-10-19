@@ -50,26 +50,37 @@ jobs:
           curl -sL -o /tmp/injection.patch \
             "https://gitlab.com/kalilinux/nethunter/build-scripts/kali-nethunter-kernel-builder/-/raw/main/patches/4.14/add-qcacld-3.0-injection-4.14.patch"
 
-          # Drop the one hunk that touches net_dev_hold_ref_count (already
-          # applied manually to this branch as its own commit).
+          # Drop hunks already applied manually to this branch as commits:
+          # - net_dev_hold_ref_count index fix
+          # - state_ctrl monitor guard (hand-ported to citrus pr_debug variant)
+          # - linux/cred.h + linux/uidgid.h includes
           python3 << 'STRIP'
           import re
           with open('/tmp/injection.patch') as f:
               text = f.read()
-          # Split into per-file sections
           parts = re.split(r'(?m)^(?=diff --git )', text)
           out = []
+          stripped = []
           for p in parts:
               if 'wlan_hdd_main.c' in p.split('\n',1)[0]:
-                  # remove the hunk containing net_dev_hold_ref_count
                   hunks = re.split(r'(?m)^(?=@@ )', p)
                   head, *hs = hunks
-                  hs = [h for h in hs if 'net_dev_hold_ref_count' not in h]
-                  p = head + ''.join(hs)
+                  markers = ('net_dev_hold_ref_count',
+                             'monitor_mode_global',
+                             'linux/uidgid.h')
+                  kept = []
+                  for h in hs:
+                      m = [x for x in markers if x in h]
+                      if m:
+                          stripped.append(m[0])
+                      else:
+                          kept.append(h)
+                  p = head + ''.join(kept)
               out.append(p)
           with open('/tmp/injection.patch','w') as f:
               f.write(''.join(out))
-          print('patch stripped of pre-applied hunk')
+          print('stripped pre-applied hunks:', stripped)
+          assert len(stripped) == 3, f'expected 3, got {stripped}'
           STRIP
 
           patch -p1 --no-backup-if-mismatch -r /tmp/rejects.txt < /tmp/injection.patch
