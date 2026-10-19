@@ -1,0 +1,177 @@
+name: Build Injection Kernel
+
+on:
+  push:
+    branches: [qualcomm-3.0-injection]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout kernel source
+        uses: actions/checkout@v4
+        with:
+          ref: qualcomm-3.0-injection
+          submodules: recursive
+
+      - name: Install build dependencies and LLVM
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc bison build-essential ccache curl flex \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+            git gnupg \
+            lib32ncurses5-dev lib32readline-dev libssl-dev \
+            libxml2 libxslt1-dev lz4 zip zlib1g-dev \
+            python3 \
+            clang lld llvm llvm-dev patch
+          sudo ln -sf /usr/bin/python3 /usr/bin/python2
+
+      - name: Fix Python 2 scripts for Python 3
+        run: |
+          sed -i 's/^PYTHON2\s*=\s*python2$/PYTHON2\t\t= python3/' Makefile
+          python3 << 'PATCH'
+          with open('scripts/dtc/libfdt/mkdtboimg.py', 'r') as f:
+              content = f.read()
+          content = content.replace('xrange(', 'range(')
+          content = content.replace("array('c', ' ' * self.__metadata_size)",
+                                    "bytearray(b' ' * self.__metadata_size)")
+          content = content.replace('dt_entry_buf = ""', 'dt_entry_buf = b""')
+          with open('scripts/dtc/libfdt/mkdtboimg.py', 'w') as f:
+              f.write(content)
+          PATCH
+
+      - name: Apply qcacld-3.0 injection patch
+        run: |
+          set -e
+          curl -sL -o /tmp/injection.patch \
+            "https://gitlab.com/kalilinux/nethunter/build-scripts/kali-nethunter-kernel-builder/-/raw/main/patches/4.14/add-qcacld-3.0-injection-4.14.patch"
+
+          # Drop the one hunk that touches net_dev_hold_ref_count (already
+          # applied manually to this branch as its own commit).
+          python3 << 'STRIP'
+          import re
+          with open('/tmp/injection.patch') as f:
+              text = f.read()
+          # Split into per-file sections
+          parts = re.split(r'(?m)^(?=diff --git )', text)
+          out = []
+          for p in parts:
+              if 'wlan_hdd_main.c' in p.split('\n',1)[0]:
+                  # remove the hunk containing net_dev_hold_ref_count
+                  hunks = re.split(r'(?m)^(?=@@ )', p)
+                  head, *hs = hunks
+                  hs = [h for h in hs if 'net_dev_hold_ref_count' not in h]
+                  p = head + ''.join(hs)
+              out.append(p)
+          with open('/tmp/injection.patch','w') as f:
+              f.write(''.join(out))
+          print('patch stripped of pre-applied hunk')
+          STRIP
+
+          patch -p1 --no-backup-if-mismatch -r /tmp/rejects.txt < /tmp/injection.patch
+          echo "=== patch applied, checking for rejects ==="
+          if grep -q "FAILED" /tmp/rejects.txt 2>/dev/null; then
+            echo "FATAL: rejected hunks remain:"
+            cat /tmp/rejects.txt
+            exit 1
+          fi
+          echo "=== injection support flag in defconfig ==="
+          grep -n "FEATURE_FRAME_INJECTION" drivers/staging/qcacld-3.0/configs/default_defconfig
+          grep -n "FEATURE_FRAME_INJECTION" drivers/staging/qcacld-3.0/Kbuild | head -5
+
+      - name: Build kernel
+        run: |
+          export KBUILD_BUILD_USER=nh-inj-builder
+          export KBUILD_BUILD_HOST=github
+          set -e
+
+          echo "=== Generating .config from vendor/nh_defconfig ==="
+          make O=out CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 IAS=1 ARCH=arm64 vendor/nh_defconfig
+
+          echo "=== Forcing USB/BT configs ==="
+          scripts/config --file out/.config --enable USB
+          scripts/config --file out/.config --enable USB_ACM
+          scripts/config --file out/.config --enable USB_SERIAL
+          scripts/config --file out/.config --enable USB_SERIAL_GENERIC
+          scripts/config --file out/.config --enable USB_SERIAL_CDC_ACM
+          scripts/config --file out/.config --enable USB_SERIAL_CH341
+          scripts/config --file out/.config --enable USB_SERIAL_CP210X
+          scripts/config --file out/.config --enable USB_SERIAL_FTDI_SIO
+          scripts/config --file out/.config --enable USB_SERIAL_OPTION
+          scripts/config --file out/.config --enable USB_SERIAL_PL2303
+          scripts/config --file out/.config --enable BT_HCIBTUSB
+          scripts/config --file out/.config --enable BT_HCIUART
+          scripts/config --file out/.config --enable BT_HCIUSB
+
+          echo "=== Pre-build .config USB verification ==="
+          for cfg in CONFIG_USB_ACM CONFIG_USB_SERIAL CONFIG_USB_SERIAL_CH341 CONFIG_BT_HCIBTUSB CONFIG_BT_HCIUART; do
+            val=$(grep "^${cfg}=" out/.config 2>/dev/null || echo "MISSING")
+            echo "$cfg: $val"
+            if [ "$val" = "MISSING" ] || [ "$val" = "# ${cfg} is not set" ]; then
+              echo "FATAL: $cfg missing after forcing!"
+              exit 1
+            fi
+          done
+
+          echo "=== Starting kernel build ==="
+          make O=out CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 IAS=1 ARCH=arm64 -j$(nproc) 2>&1 | tee build.log
+
+          echo "=== Post-build verification ==="
+          ls -la out/arch/arm64/boot/Image
+
+      - name: Package AnyKernel3
+        run: |
+          cp out/arch/arm64/boot/Image .
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git /tmp/ak3
+          mkdir -p nethunter-kernel
+          cp /tmp/ak3/META-INF -r nethunter-kernel/
+          cp /tmp/ak3/tools -r nethunter-kernel/
+          cp /tmp/ak3/anykernel.sh nethunter-kernel/
+          cp Image nethunter-kernel/
+
+          cd nethunter-kernel
+
+          perl -pi -e 's/do\.devicecheck=\d/do.devicecheck=0/i' anykernel.sh
+          perl -pi -e 's/do\.systemless=\d/do.systemless=0/i' anykernel.sh
+          perl -pi -e 's|^BLOCK=.*|BLOCK=/dev/block/bootdevice/by-name/boot;|i' anykernel.sh
+          perl -pi -e 's|^IS_SLOT_DEVICE=\d|IS_SLOT_DEVICE=0;|i' anykernel.sh
+          perl -pi -e 's|^#IS_SLOT_DEVICE=0|IS_SLOT_DEVICE=0;|i' anykernel.sh
+
+          python3 -c "
+          with open('anykernel.sh', 'r') as f:
+              c = f.read()
+          import re
+          c = re.sub(r'device\.name\d=\S+', '', c)
+          c = c.replace(\"device.name5=\", \"device.name1=citrus\")
+          with open('anykernel.sh', 'w') as f:
+              f.write(c)
+          "
+
+          sed -i 's/;;/;/g' anykernel.sh
+          sed -i '/init.tuna.rc/d; /fstab.tuna/d; /cpuctl cpu,timer_slack/d; /nodiratime barrier=0/d; /bootscript/d; /usbdisk/d' anykernel.sh
+
+          echo "=== anykernel.sh verification ==="
+          grep -E "^BLOCK=|^IS_SLOT|do\.devicecheck|do\.systemless|device\.name1" anykernel.sh
+
+          zip -r9 ../nethunter-citrus-injection.zip .
+          cd ..
+          ls -lh nethunter-citrus-injection.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nethunter-citrus-injection-kernel
+          path: nethunter-citrus-injection.zip
+          retention-days: 30
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: injection-build-log
+          path: build.log
+          retention-days: 7
