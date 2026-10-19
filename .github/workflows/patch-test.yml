@@ -1,7 +1,8 @@
 name: Test Injection Patch
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [qualcomm-3.0-injection]
 
 jobs:
   try-patch:
